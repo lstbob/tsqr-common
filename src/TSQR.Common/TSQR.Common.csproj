@@ -4,6 +4,15 @@
     <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <PackageId>TSQR.Common</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>lbobc</Authors>
+    <Description>Shared common utilities for the TSQR suite.</Description>
+    <RepositoryUrl>https://github.com/lstbob/tsqr-common.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/lstbob/tsqr-common</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
 </Project>
