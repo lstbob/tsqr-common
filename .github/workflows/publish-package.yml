@@ -1,0 +1,36 @@
+name: Publish TSQR.Common
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/TSQR.Common/**'
+      - '.github/workflows/publish-package.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack
+        run: dotnet pack src/TSQR.Common/TSQR.Common.csproj -c Release -o ./artifacts
+
+      - name: Publish to GitHub Packages
+        run: >
+          dotnet nuget push ./artifacts/*.nupkg
+          --source "https://nuget.pkg.github.com/lstbob/index.json"
+          --api-key "${{ secrets.GITHUB_TOKEN }}"
+          --skip-duplicate
