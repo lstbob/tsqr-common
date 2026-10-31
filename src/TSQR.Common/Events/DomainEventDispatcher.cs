@@ -5,25 +5,37 @@ using System.Linq.Expressions;
 namespace TSQR.Common.Events;
 
 /// <summary>
-/// Resolves every <see cref="IDomainEventHandler{TEvent}"/> registered for an
-/// event's runtime type and invokes the handlers sequentially.
+/// Resolves every handler registered for an event's runtime type and invokes
+/// the handlers sequentially.
 /// </summary>
 /// <remarks>
-/// Handler lookup and invocation metadata are cached per event type. The
-/// compiled invoker avoids a reflection call for every event while preserving
-/// the original exception instead of wrapping it in
+/// Handler lookup and invocation metadata are cached per event type and
+/// dispatch phase. The compiled invoker avoids a reflection call for every
+/// event while preserving the original exception instead of wrapping it in
 /// <see cref="System.Reflection.TargetInvocationException"/>.
 ///
-/// Handlers run sequentially on purpose: they normally share the scoped
-/// unit-of-work / DbContext and are not safe to execute concurrently.
+/// Handlers run sequentially on purpose: in-transaction handlers normally
+/// share the scoped unit-of-work / DbContext and are not safe to execute
+/// concurrently.
 /// </remarks>
 public sealed class DomainEventDispatcher(IServiceProvider serviceProvider) : IDomainEventDispatcher
 {
-    private static readonly ConcurrentDictionary<Type, HandlerInvoker> Invokers = new();
+    private static readonly ConcurrentDictionary<HandlerCacheKey, HandlerInvoker> Invokers = new();
 
-    public async Task DispatchAsync(
+    public ValueTask DispatchAsync(
         IReadOnlyCollection<IDomainEvent> domainEvents,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        DispatchCoreAsync(domainEvents, typeof(IDomainEventHandler<>), cancellationToken);
+
+    public ValueTask DispatchPostCommitAsync(
+        IReadOnlyCollection<IDomainEvent> domainEvents,
+        CancellationToken cancellationToken = default) =>
+        DispatchCoreAsync(domainEvents, typeof(IPostCommitDomainEventHandler<>), cancellationToken);
+
+    private async ValueTask DispatchCoreAsync(
+        IReadOnlyCollection<IDomainEvent> domainEvents,
+        Type openHandlerType,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(domainEvents);
 
@@ -31,7 +43,9 @@ public sealed class DomainEventDispatcher(IServiceProvider serviceProvider) : ID
         {
             ArgumentNullException.ThrowIfNull(domainEvent);
 
-            var invoker = Invokers.GetOrAdd(domainEvent.GetType(), CreateInvoker);
+            var invoker = Invokers.GetOrAdd(
+                new HandlerCacheKey(domainEvent.GetType(), openHandlerType),
+                static key => CreateInvoker(key));
 
             if (serviceProvider.GetService(invoker.HandlersType) is not IEnumerable handlers)
                 continue;
@@ -47,9 +61,9 @@ public sealed class DomainEventDispatcher(IServiceProvider serviceProvider) : ID
         }
     }
 
-    private static HandlerInvoker CreateInvoker(Type eventType)
+    private static HandlerInvoker CreateInvoker(HandlerCacheKey key)
     {
-        var handlerType = typeof(IDomainEventHandler<>).MakeGenericType(eventType);
+        var handlerType = key.OpenHandlerType.MakeGenericType(key.EventType);
         var handlersType = typeof(IEnumerable<>).MakeGenericType(handlerType);
         var handleMethod = handlerType.GetMethod("HandleAsync")
             ?? throw new InvalidOperationException(
@@ -63,11 +77,11 @@ public sealed class DomainEventDispatcher(IServiceProvider serviceProvider) : ID
         var call = Expression.Call(
             Expression.Convert(handlerParameter, handlerType),
             handleMethod,
-            Expression.Convert(eventParameter, eventType),
+            Expression.Convert(eventParameter, key.EventType),
             cancellationTokenParameter);
 
         var handler = Expression
-            .Lambda<Func<object, IDomainEvent, CancellationToken, Task>>(
+            .Lambda<Func<object, IDomainEvent, CancellationToken, ValueTask>>(
                 call,
                 handlerParameter,
                 eventParameter,
@@ -77,7 +91,9 @@ public sealed class DomainEventDispatcher(IServiceProvider serviceProvider) : ID
         return new HandlerInvoker(handlersType, handler);
     }
 
+    private readonly record struct HandlerCacheKey(Type EventType, Type OpenHandlerType);
+
     private sealed record HandlerInvoker(
         Type HandlersType,
-        Func<object, IDomainEvent, CancellationToken, Task> Handler);
+        Func<object, IDomainEvent, CancellationToken, ValueTask> Handler);
 }
