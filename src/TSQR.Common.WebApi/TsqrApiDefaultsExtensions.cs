@@ -10,9 +10,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using TSQR.Common.WebApi.Correlation;
 using TSQR.Common.WebApi.HealthChecks;
 
 namespace TSQR.Common.WebApi;
@@ -39,8 +41,15 @@ public static class TsqrApiDefaultsExtensions
         if (options.UseJsonConsoleLogging && !builder.Environment.IsDevelopment())
         {
             builder.Logging.ClearProviders();
-            builder.Logging.AddJsonConsole();
+            builder.Logging.AddJsonConsole(json =>
+            {
+                json.IncludeScopes = true;
+                json.UseUtcTimestamp = true;
+                json.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
+            });
         }
+
+        builder.Services.AddTsqrCorrelation();
 
         builder.Services.AddTsqrJwtAuthentication(builder.Configuration);
         builder.Services.AddAuthorization(authorization =>
@@ -58,6 +67,10 @@ public static class TsqrApiDefaultsExtensions
             {
                 context.ProblemDetails.Extensions["traceId"] =
                     Activity.Current?.Id ?? context.HttpContext.TraceIdentifier;
+
+                var correlationId = context.HttpContext.GetCorrelationId();
+                if (!string.IsNullOrWhiteSpace(correlationId))
+                    context.ProblemDetails.Extensions["correlationId"] = correlationId;
             };
         });
         builder.Services.AddExceptionHandler<TsqrExceptionHandler>();
@@ -144,6 +157,18 @@ public static class TsqrApiDefaultsExtensions
                             exporter.Endpoint = new Uri(otlpEndpoint));
                     }
                 });
+
+            if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+            {
+                builder.Logging.AddOpenTelemetry(logging =>
+                {
+                    logging.IncludeFormattedMessage = true;
+                    logging.IncludeScopes = true;
+                    logging.ParseStateValues = true;
+                    logging.AddOtlpExporter(exporter =>
+                        exporter.Endpoint = new Uri(otlpEndpoint));
+                });
+            }
         }
 
         return builder;
@@ -166,6 +191,7 @@ public static class TsqrApiDefaultsExtensions
         }
 
         app.UseExceptionHandler();
+        app.UseTsqrCorrelation();
         app.UseHttpsRedirection();
         app.UseRouting();
 
@@ -173,6 +199,7 @@ public static class TsqrApiDefaultsExtensions
             app.UseRateLimiter();
 
         app.UseAuthentication();
+        app.UseTsqrRequestContextLogging();
         app.UseAuthorization();
         app.MapControllers();
 

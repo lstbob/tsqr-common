@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using TSQR.Common.Exceptions;
+using TSQR.Common.WebApi.Correlation;
 
 namespace TSQR.Common.WebApi;
 
@@ -78,6 +79,11 @@ public sealed class TsqrExceptionHandler(ILogger<TsqrExceptionHandler> logger) :
         };
 
         problem.Extensions["traceId"] = Activity.Current?.Id ?? context.TraceIdentifier;
+
+        var correlationId = context.GetCorrelationId();
+        if (!string.IsNullOrWhiteSpace(correlationId))
+            problem.Extensions["correlationId"] = correlationId;
+
         if (!string.IsNullOrWhiteSpace(entityName))
             problem.Extensions["entity"] = entityName;
 
