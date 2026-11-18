@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
 
     <PackageId>TSQR.Common.WebApi</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>lbobc</Authors>
     <Description>Shared ASP.NET Core hosting defaults for the TSQR suite.</Description>
     <RepositoryUrl>https://github.com/lstbob/tsqr-common.git</RepositoryUrl>

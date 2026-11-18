@@ -14,6 +14,8 @@ using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using TSQR.Common.Authorization;
+using TSQR.Common.WebApi.Authorization;
 using TSQR.Common.WebApi.Correlation;
 using TSQR.Common.WebApi.HealthChecks;
 
@@ -50,6 +52,7 @@ public static class TsqrApiDefaultsExtensions
         }
 
         builder.Services.AddTsqrCorrelation();
+        builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         builder.Services.AddTsqrJwtAuthentication(builder.Configuration);
         builder.Services.AddAuthorization(authorization =>
@@ -57,6 +60,16 @@ public static class TsqrApiDefaultsExtensions
             authorization.FallbackPolicy = new AuthorizationPolicyBuilder()
                 .RequireAuthenticatedUser()
                 .Build();
+
+            foreach (var permission in Permissions.All)
+            {
+                authorization.AddPolicy(permission, policy =>
+                {
+                    policy.RequireAuthenticatedUser();
+                    policy.AddRequirements(new PermissionRequirement(permission));
+                });
+            }
+
             options.ConfigureAuthorization?.Invoke(authorization);
         });
 
