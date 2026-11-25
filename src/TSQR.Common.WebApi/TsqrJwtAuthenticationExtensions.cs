@@ -8,19 +8,54 @@ namespace TSQR.Common.WebApi;
 
 public static class TsqrJwtAuthenticationExtensions
 {
+    public const string DefaultIssuer = "tsqr-autheo";
+    public const string DefaultAudience = "tsqr-services";
+    public const string DefaultKeyId = "tsqr-autheo-v1";
+
     /// <summary>
     /// Registers the suite-wide JWT bearer authentication scheme using the
-    /// standard <c>Jwt</c> configuration section.
+    /// standard <c>Jwt</c> configuration section. RS256 public-key validation
+    /// is used when <c>Jwt:PublicKey</c> (or the base64/path variant) is
+    /// configured; the legacy symmetric <c>Jwt:Key</c> remains supported.
     /// </summary>
     public static IServiceCollection AddTsqrJwtAuthentication(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         var jwtSection = configuration.GetSection("Jwt");
-        var jwtKey = jwtSection["Key"]
-            ?? throw new InvalidOperationException("JWT Key not configured.");
-        var jwtIssuer = jwtSection["Issuer"] ?? "tsqr-autheo";
-        var jwtAudience = jwtSection["Audience"] ?? "tsqr-services";
+        var jwtIssuer = jwtSection["Issuer"] ?? DefaultIssuer;
+        var jwtAudience = jwtSection["Audience"] ?? DefaultAudience;
+        var keyId = jwtSection["KeyId"] ?? DefaultKeyId;
+        var publicKeyPem = JwtKeyMaterial.ResolvePublicKeyPem(
+            jwtSection["PublicKey"],
+            jwtSection["PublicKeyBase64"],
+            jwtSection["PublicKeyPath"]);
+
+        SecurityKey validationKey;
+        IssuerSigningKeyResolver? keyResolver = null;
+        string[] validAlgorithms;
+
+        if (publicKeyPem is not null)
+        {
+            var rsa = JwtKeyMaterial.ImportRsaPublicKey(publicKeyPem);
+            validationKey = new RsaSecurityKey(rsa) { KeyId = keyId };
+            keyResolver = (_, _, kid, _) =>
+                string.Equals(kid, keyId, StringComparison.Ordinal)
+                    ? [validationKey]
+                    : Array.Empty<SecurityKey>();
+            validAlgorithms = [SecurityAlgorithms.RsaSha256];
+        }
+        else
+        {
+            var jwtKey = jwtSection["Key"]
+                ?? throw new InvalidOperationException(
+                    "JWT Key or Jwt:PublicKey must be configured.");
+            if (jwtKey.Length < 32)
+                throw new InvalidOperationException(
+                    "JWT symmetric key must be at least 32 characters.");
+            validationKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+            validAlgorithms = [SecurityAlgorithms.HmacSha256];
+        }
 
         services
             .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -37,7 +72,9 @@ public static class TsqrJwtAuthenticationExtensions
                     ValidateIssuerSigningKey = true,
                     ValidIssuer = jwtIssuer,
                     ValidAudience = jwtAudience,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+                    IssuerSigningKey = validationKey,
+                    IssuerSigningKeyResolver = keyResolver,
+                    ValidAlgorithms = validAlgorithms,
                     ClockSkew = TimeSpan.Zero,
                 };
             });
