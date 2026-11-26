@@ -90,6 +90,95 @@ public class JwtAuthenticationTests
     }
 
     [Fact]
+    public async Task Rs256Token_SignedWithPreviousKey_ValidatesDuringRotation()
+    {
+        using var oldRsa = RSA.Create(2048);
+        using var newRsa = RSA.Create(2048);
+        var parameters = CreateMultiKeyParameters(
+            ("test-key-1", oldRsa),
+            ("test-key-2", newRsa));
+        var token = CreateRs256Token(oldRsa, "test-key-1");
+
+        var result = await new JwtSecurityTokenHandler().ValidateTokenAsync(token, parameters);
+
+        Assert.True(result.IsValid, result.Exception?.Message);
+    }
+
+    [Fact]
+    public async Task Rs256Token_SignedWithNewKey_ValidatesDuringRotation()
+    {
+        using var oldRsa = RSA.Create(2048);
+        using var newRsa = RSA.Create(2048);
+        var parameters = CreateMultiKeyParameters(
+            ("test-key-1", oldRsa),
+            ("test-key-2", newRsa));
+        var token = CreateRs256Token(newRsa, "test-key-2");
+
+        var result = await new JwtSecurityTokenHandler().ValidateTokenAsync(token, parameters);
+
+        Assert.True(result.IsValid, result.Exception?.Message);
+    }
+
+    [Fact]
+    public async Task Rs256Token_WithUnknownKid_IsRejectedByKeyRing()
+    {
+        using var knownRsa = RSA.Create(2048);
+        using var unknownRsa = RSA.Create(2048);
+        var parameters = CreateMultiKeyParameters(("test-key-1", knownRsa));
+        var token = CreateRs256Token(unknownRsa, "unknown-key");
+
+        var result = await new JwtSecurityTokenHandler().ValidateTokenAsync(token, parameters);
+
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public async Task Rs256Token_WithoutKid_IsRejectedByKeyRing()
+    {
+        using var rsa = RSA.Create(2048);
+        var parameters = CreateMultiKeyParameters(("test-key-1", rsa));
+        var token = CreateToken(
+            new SigningCredentials(
+                new RsaSecurityKey(rsa),
+                SecurityAlgorithms.RsaSha256));
+
+        var result = await new JwtSecurityTokenHandler().ValidateTokenAsync(token, parameters);
+
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void VerifierConfiguration_RejectsDuplicatePublicKeyIds()
+    {
+        using var rsa = RSA.Create(2048);
+        var encodedPem = Convert.ToBase64String(
+            Encoding.UTF8.GetBytes(rsa.ExportSubjectPublicKeyInfoPem()));
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Jwt:PublicKeys"] = $"test-key-1={encodedPem};test-key-1={encodedPem}",
+        });
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => new ServiceCollection().AddTsqrJwtAuthentication(configuration));
+
+        Assert.Contains("duplicate", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void VerifierConfiguration_RejectsMalformedPublicKeyRingEntry()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["Jwt:PublicKeys"] = "missing-separator",
+        });
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => new ServiceCollection().AddTsqrJwtAuthentication(configuration));
+
+        Assert.Contains("kid=base64Pem", exception.Message);
+    }
+
+    [Fact]
     public async Task LegacyHmacToken_StillValidates()
     {
         const string key = "test-key-at-least-32-characters-long!!";
@@ -177,6 +266,20 @@ public class JwtAuthenticationTests
             () => new ServiceCollection().AddTsqrJwtAuthentication(configuration));
 
         Assert.Contains("32", exception.Message);
+    }
+
+    private static TokenValidationParameters CreateMultiKeyParameters(
+        params (string KeyId, RSA Rsa)[] keys)
+    {
+        var entries = keys.Select(key =>
+            $"{key.KeyId}={Convert.ToBase64String(Encoding.UTF8.GetBytes(key.Rsa.ExportSubjectPublicKeyInfoPem()))}");
+
+        return CreateParameters(new Dictionary<string, string?>
+        {
+            ["Jwt:Issuer"] = Issuer,
+            ["Jwt:Audience"] = Audience,
+            ["Jwt:PublicKeys"] = string.Join(';', entries),
+        });
     }
 
     private static TokenValidationParameters CreateParameters(
