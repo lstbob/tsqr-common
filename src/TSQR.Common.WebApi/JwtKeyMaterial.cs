@@ -46,6 +46,72 @@ internal static class JwtKeyMaterial
         return null;
     }
 
+    /// <summary>
+    /// Parses a semicolon-separated key ring of <c>kid=base64Pem</c> entries.
+    /// The returned RSA instances are owned by the caller and must be disposed.
+    /// </summary>
+    public static IReadOnlyDictionary<string, RSA> ParsePublicKeyRing(string value)
+    {
+        var keys = new Dictionary<string, RSA>(StringComparer.Ordinal);
+
+        try
+        {
+            foreach (var entry in value.Split(
+                         ';',
+                         StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var separator = entry.IndexOf('=');
+                if (separator <= 0 || separator == entry.Length - 1)
+                {
+                    throw new InvalidOperationException(
+                        "Jwt:PublicKeys entries must use the format 'kid=base64Pem' separated by semicolons.");
+                }
+
+                var kid = entry[..separator].Trim();
+                var encodedPem = entry[(separator + 1)..].Trim();
+                if (kid.Length == 0 || encodedPem.Length == 0)
+                {
+                    throw new InvalidOperationException(
+                        "Jwt:PublicKeys entries must include a non-empty key id and base64 PEM value.");
+                }
+
+                if (keys.ContainsKey(kid))
+                {
+                    throw new InvalidOperationException(
+                        $"Jwt:PublicKeys contains the duplicate key id '{kid}'.");
+                }
+
+                string pem;
+                try
+                {
+                    pem = Encoding.UTF8.GetString(Convert.FromBase64String(encodedPem));
+                }
+                catch (FormatException ex)
+                {
+                    throw new InvalidOperationException(
+                        $"Jwt:PublicKeys entry '{kid}' is not valid base64.",
+                        ex);
+                }
+
+                keys[kid] = ImportRsaPublicKey(pem);
+            }
+
+            if (keys.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Jwt:PublicKeys must contain at least one 'kid=base64Pem' entry.");
+            }
+
+            return keys;
+        }
+        catch
+        {
+            foreach (var key in keys.Values)
+                key.Dispose();
+            throw;
+        }
+    }
+
     public static RSA ImportRsaPublicKey(string pem)
     {
         if (pem.Contains("PRIVATE KEY", StringComparison.Ordinal))
