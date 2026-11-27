@@ -13,7 +13,7 @@ namespace TSQR.Common.WebApi.Tests;
 public class JwtAuthenticationTests
 {
     private const string Issuer = "tsqr-autheo";
-    private const string Audience = "tsqr-services";
+    private const string Audience = "tsqr-tool-lib";
     private const string KeyId = "test-key-1";
 
     [Fact]
@@ -66,6 +66,29 @@ public class JwtAuthenticationTests
         var token = CreateRs256Token(rsa, KeyId, audience: "another-service");
 
         var result = await new JwtSecurityTokenHandler().ValidateTokenAsync(token, parameters);
+
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public async Task Rs256Token_ForServiceA_IsRejectedByServiceB()
+    {
+        using var rsa = RSA.Create(2048);
+        var serviceBParameters = CreateParameters(new Dictionary<string, string?>
+        {
+            ["Jwt:Issuer"] = Issuer,
+            ["Jwt:Audience"] = "tsqr-support",
+            ["Jwt:PublicKey"] = rsa.ExportSubjectPublicKeyInfoPem(),
+            ["Jwt:KeyId"] = KeyId,
+        });
+        var serviceAToken = CreateRs256Token(
+            rsa,
+            KeyId,
+            audience: "tsqr-tool-lib");
+
+        var result = await new JwtSecurityTokenHandler().ValidateTokenAsync(
+            serviceAToken,
+            serviceBParameters);
 
         Assert.False(result.IsValid);
     }
