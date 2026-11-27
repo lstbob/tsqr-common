@@ -14,10 +14,12 @@ public static class TsqrJwtAuthenticationExtensions
 
     /// <summary>
     /// Registers the suite-wide JWT bearer authentication scheme using the
-    /// standard <c>Jwt</c> configuration section. RS256 public-key validation
-    /// is used when <c>Jwt:PublicKeys</c>, <c>Jwt:PublicKey</c> (or the
-    /// base64/path variant) is configured; the legacy symmetric
-    /// <c>Jwt:Key</c> remains supported.
+    /// standard <c>Jwt</c> configuration section. Each service must set
+    /// <c>Jwt:Audience</c> to its own <c>tsqr-&lt;service&gt;</c> audience (the
+    /// gateway uses <c>tsqr-gateway</c>); the default is only a legacy
+    /// fallback. RS256 public-key validation is used when
+    /// <c>Jwt:PublicKeys</c>, <c>Jwt:PublicKey</c> (or the base64/path variant)
+    /// is configured; the legacy symmetric <c>Jwt:Key</c> remains supported.
     /// </summary>
     public static IServiceCollection AddTsqrJwtAuthentication(
         this IServiceCollection services,
